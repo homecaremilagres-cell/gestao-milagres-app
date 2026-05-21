@@ -7,20 +7,16 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Gestão Milagres Cloud", layout="wide")
 st_autorefresh(interval=600000, key="datarefresh")
 
-# --- CSS PARA DEIXAR OS BOTÕES COM CARA DE EXPANDER ---
+# --- CSS SEGURO PARA COMPATIBILIDADE CLOUD ---
 st.markdown("""
     <style>
         .header-style { font-weight: bold; color: #888; font-size: 13px; text-transform: uppercase; margin-bottom: 5px; }
-        .stTable { background-color: #1a1c23; padding: 10px; border-radius: 0px 0px 5px 5px; border: 1px solid #333; margin-top: -5px; margin-bottom: 15px; }
+        .stTable { background-color: #1a1c23; padding: 10px; border-radius: 5px; border: 1px solid #333; margin-top: 5px; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
 # Cabeçalho Principal
-st.markdown("""
-    <div style="display: flex; align-items: center; justify-content: center; width: 100%; margin-bottom: 30px; gap: 20px;">
-        <h1 style="margin: 0; color: white; font-family: sans-serif;">Monitoramento Cloud - Gestão Milagres</h1>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: white; font-family: sans-serif; margin-bottom: 30px;'>Monitoramento Cloud - Gestão Milagres</h1>", unsafe_allow_html=True)
 
 # 2. Função de Formatação Contábil
 def formatar_moeda(valor):
@@ -30,22 +26,22 @@ def formatar_moeda(valor):
         return "R$ 0,00"
 
 # 3. CONEXÃO COM GOOGLE SHEETS
+@st.cache_data(ttl=300)
 def carregar_dados_gsheets():
     try:
-        # Cria a conexão (Os dados do link da planilha devem estar no secrets.toml)
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # Lê cada aba específica que você criou
         df_equip = conn.read(worksheet="detalhamento", ttl="5m")
         df_pacientes = conn.read(worksheet="pacientes", ttl="5m")
         df_tipo = conn.read(worksheet="tipos", ttl="5m")
 
-        # --- PROCESSAMENTO E LIMPEZA (A mesma lógica anterior) ---
+        # Limpeza financeira
         for col in ['Valor Total', 'Valor Unitario']:
             if col in df_equip.columns:
                 df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                 df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
 
+        # Tratamento de texto para o casamento (Merge)
         df_equip['Paciente'] = df_equip['Paciente'].astype(str).str.strip().str.upper()
         df_pacientes['Paciente'] = df_pacientes['Paciente'].astype(str).str.strip().str.upper()
         df_equip['Equipamento'] = df_equip['Equipamento'].astype(str).str.strip().str.upper()
@@ -68,9 +64,9 @@ def carregar_dados_gsheets():
 
 df_raw = carregar_dados_gsheets()
 
-# --- ABAIXO SEGUE A MESMA LÓGICA DE EXIBIÇÃO QUE JÁ FUNCIONAVA PERFEITAMENTE ---
 if not df_raw.empty:
-    # Filtros por Unidade
+    # --- FILTROS POR UNIDADE ---
+    st.markdown("### 📍 Selecionar Unidade")
     filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f)])
     if 'filial_ativa' not in st.session_state: st.session_state.filial_ativa = "TODAS"
     
@@ -82,11 +78,10 @@ if not df_raw.empty:
 
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-    # Blocos de Resumo com Totais
+    # --- BLOCOS DE RESUMO SUPERIORES ---
     st.markdown("### 📊 Resumo por Categoria")
     c1, c2, c3, c4 = st.columns(4)
     
-    # Função para gerar tabela de resumo com linha de total
     def gerar_resumo_com_total(df, grupo, col_nome):
         res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
@@ -98,19 +93,21 @@ if not df_raw.empty:
 
     with c1:
         st.write("**🏢 Operadoras**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Operadora', 'Operadora'), hide_index=True)
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Operadora', 'Operadora'), hide_index=True, use_container_width=True)
     with c2:
         st.write("**🚑 Atendimento**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Tipo de Atendimento'), hide_index=True)
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Tipo de Atendimento'), hide_index=True, use_container_width=True)
     with c3:
         st.write("**🚚 Locadora**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), hide_index=True)
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), hide_index=True, use_container_width=True)
     with c4:
         st.write("**🔧 Tipo de Item**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), hide_index=True)
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), hide_index=True, use_container_width=True)
 
-    # Detalhamento por Paciente (Clique estendido)
+    # --- DETALHAMENTO POR PACIENTE (CLIQUE ESTENDIDO CORRIGIDO) ---
     st.divider()
+    st.markdown(f"### 👥 Detalhamento por Paciente - {st.session_state.filial_ativa}")
+    
     h = st.columns([5, 1, 1.5])
     h[0].markdown('<p class="header-style">Paciente</p>', unsafe_allow_html=True)
     h[1].markdown('<p class="header-style" style="text-align: center;">Itens</p>', unsafe_allow_html=True)
@@ -135,7 +132,10 @@ if not df_raw.empty:
             st.rerun()
 
         if st.session_state.expander_states[nome_p]:
-            df_det = df_filt[df_filt['Paciente'] == nome_p][['Equipamento', 'Tipo', 'Qtd', 'Valor Unitario', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']]
+            df_det = df_filt[df_filt['Paciente'] == nome_p][['Equipamento', 'Tipo', 'Qtd', 'Valor Unitario', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']].copy()
             df_det['Valor Unitario'] = df_det['Valor Unitario'].apply(formatar_moeda)
             df_det['Valor Total'] = df_det['Valor Total'].apply(formatar_moeda)
+            df_det.columns = ['Equipamento', 'Tipo de Item', 'Qtd', 'Valor Unitário', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']
             st.table(df_det)
+else:
+    st.warning("Nenhum dado encontrado. Verifique as abas e a conexão do Google Sheets.")
