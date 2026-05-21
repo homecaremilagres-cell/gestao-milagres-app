@@ -84,31 +84,67 @@ if not df_raw.empty:
 
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-    # --- BLOCOS DE RESUMO SUPERIORES ---
+  # --- BLOCOS DE RESUMO SUPERIORES (AJUSTADOS SEM BARRA DE ROLAGEM) ---
     st.markdown("### 📊 Resumo por Categoria")
     c1, c2, c3, c4 = st.columns(4)
     
     def gerar_resumo_com_total(df, grupo, col_nome):
         res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
-        res.columns = [col_nome, 'Qtd Pacientes', 'Valor Total']
-        total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pacientes': res['Qtd Pacientes'].sum(), 'Valor Total': res['Valor Total'].sum()}])
+        res.columns = [col_nome, 'Qtd Pac.', 'Total']  # Abreviações cirúrgicas para caber em telas menores
+        total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pac.': res['Qtd Pac.'].sum(), 'Total': res['Total'].sum()}])
         res = pd.concat([res, total], ignore_index=True)
-        res['Valor Total'] = res['Valor Total'].apply(formatar_moeda)
+        res['Total'] = res['Total'].apply(formatar_moeda)
         return res
 
     with c1:
         st.write("**🏢 Operadoras**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Operadora', 'Operadora'), hide_index=True, use_container_width=True)
+        st.dataframe(
+            gerar_resumo_com_total(df_filt, 'Operadora', 'Operadora'), 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "Operadora": st.column_config.TextColumn("Operadora", width="medium"),
+                "Qtd Pac.": st.column_config.NumberColumn(width="small"),
+                "Total": st.column_config.TextColumn(width="small")
+            }
+        )
     with c2:
         st.write("**🚑 Atendimento**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Tipo de Atendimento'), hide_index=True, use_container_width=True)
+        st.dataframe(
+            gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Atendimento'), 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "Atendimento": st.column_config.TextColumn("Atendimento", width="medium"),
+                "Qtd Pac.": st.column_config.NumberColumn(width="small"),
+                "Total": st.column_config.TextColumn(width="small")
+            }
+        )
     with c3:
         st.write("**🚚 Locadora**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), hide_index=True, use_container_width=True)
+        st.dataframe(
+            gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "Locadora": st.column_config.TextColumn("Locadora", width="medium"),
+                "Qtd Pac.": st.column_config.NumberColumn(width="small"),
+                "Total": st.column_config.TextColumn(width="small")
+            }
+        )
     with c4:
         st.write("**🔧 Tipo de Item**")
-        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), hide_index=True, use_container_width=True)
+        st.dataframe(
+            gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), 
+            hide_index=True, 
+            use_container_width=True,
+            column_config={
+                "Tipo de Item": st.column_config.TextColumn("Tipo de Item", width="medium"),
+                "Qtd Pac.": st.column_config.NumberColumn(width="small"),
+                "Total": st.column_config.TextColumn(width="small")
+            }
+        )
 
     # --- DETALHAMENTO POR PACIENTE ---
     st.divider()
