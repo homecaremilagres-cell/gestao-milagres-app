@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 from streamlit_autorefresh import st_autorefresh
 
 # 1. Configurações Iniciais da Página
@@ -25,17 +24,24 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 3. CONEXÃO COM GOOGLE SHEETS
+# 3. CONEXÃO DIRETA VIA PANDAS (À PROVA DE ERRO 400)
 @st.cache_data(ttl=300)
-def carregar_dados_gsheets():
+def carregar_dados_direto():
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
+        # ID único da sua planilha
+        sheet_id = "1d_TbFNuJKBtBK-7rfMstsQcrtnCYQLw-47vZK92JWdY"
         
-        df_equip = conn.read(worksheet="detalhamento", ttl="5m")
-        df_pacientes = conn.read(worksheet="pacientes", ttl="5m")
-        df_tipo = conn.read(worksheet="tipos", ttl="5m")
+        # Gerando URLs de exportação direta em CSV para cada aba
+        url_detalhe = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=detalhamento"
+        url_pacientes = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=pacientes"
+        url_tipos = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=tipos"
+        
+        # Lendo os dados ignorando erros de parser do Streamlit
+        df_equip = pd.read_csv(url_detalhe)
+        df_pacientes = pd.read_csv(url_pacientes)
+        df_tipo = pd.read_csv(url_tipos)
 
-        # Limpeza financeira
+        # Limpeza financeira básica
         for col in ['Valor Total', 'Valor Unitario']:
             if col in df_equip.columns:
                 df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
@@ -59,10 +65,10 @@ def carregar_dados_gsheets():
         
         return df_final
     except Exception as e:
-        st.error(f"Erro ao conectar com o Google Sheets: {e}")
+        st.error(f"Erro ao ler dados da planilha pública: {e}")
         return pd.DataFrame()
 
-df_raw = carregar_dados_gsheets()
+df_raw = carregar_dados_direto()
 
 if not df_raw.empty:
     # --- FILTROS POR UNIDADE ---
@@ -104,7 +110,7 @@ if not df_raw.empty:
         st.write("**🔧 Tipo de Item**")
         st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), hide_index=True, use_container_width=True)
 
-    # --- DETALHAMENTO POR PACIENTE (CLIQUE ESTENDIDO CORRIGIDO) ---
+    # --- DETALHAMENTO POR PACIENTE ---
     st.divider()
     st.markdown(f"### 👥 Detalhamento por Paciente - {st.session_state.filial_ativa}")
     
@@ -138,4 +144,4 @@ if not df_raw.empty:
             df_det.columns = ['Equipamento', 'Tipo de Item', 'Qtd', 'Valor Unitário', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']
             st.table(df_det)
 else:
-    st.warning("Nenhum dado encontrado. Verifique as abas e a conexão do Google Sheets.")
+    st.warning("Aguardando carregamento inicial da planilha na nuvem...")
