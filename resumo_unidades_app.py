@@ -1,0 +1,141 @@
+import streamlit as st
+import pandas as pd
+from streamlit_gsheets import GSheetsConnection
+from streamlit_autorefresh import st_autorefresh
+
+# 1. Configurações Iniciais da Página
+st.set_page_config(page_title="Gestão Milagres Cloud", layout="wide")
+st_autorefresh(interval=600000, key="datarefresh")
+
+# --- CSS PARA DEIXAR OS BOTÕES COM CARA DE EXPANDER ---
+st.markdown("""
+    <style>
+        .header-style { font-weight: bold; color: #888; font-size: 13px; text-transform: uppercase; margin-bottom: 5px; }
+        .stTable { background-color: #1a1c23; padding: 10px; border-radius: 0px 0px 5px 5px; border: 1px solid #333; margin-top: -5px; margin-bottom: 15px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Cabeçalho Principal
+st.markdown("""
+    <div style="display: flex; align-items: center; justify-content: center; width: 100%; margin-bottom: 30px; gap: 20px;">
+        <h1 style="margin: 0; color: white; font-family: sans-serif;">Monitoramento Cloud - Gestão Milagres</h1>
+    </div>
+    """, unsafe_allow_html=True)
+
+# 2. Função de Formatação Contábil
+def formatar_moeda(valor):
+    try:
+        return f"R$ {float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+    except:
+        return "R$ 0,00"
+
+# 3. CONEXÃO COM GOOGLE SHEETS
+def carregar_dados_gsheets():
+    try:
+        # Cria a conexão (Os dados do link da planilha devem estar no secrets.toml)
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Lê cada aba específica que você criou
+        df_equip = conn.read(worksheet="detalhamento", ttl="5m")
+        df_pacientes = conn.read(worksheet="pacientes", ttl="5m")
+        df_tipo = conn.read(worksheet="tipos", ttl="5m")
+
+        # --- PROCESSAMENTO E LIMPEZA (A mesma lógica anterior) ---
+        for col in ['Valor Total', 'Valor Unitario']:
+            if col in df_equip.columns:
+                df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
+                df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
+
+        df_equip['Paciente'] = df_equip['Paciente'].astype(str).str.strip().str.upper()
+        df_pacientes['Paciente'] = df_pacientes['Paciente'].astype(str).str.strip().str.upper()
+        df_equip['Equipamento'] = df_equip['Equipamento'].astype(str).str.strip().str.upper()
+        df_tipo['Equipamento'] = df_tipo['Equipamento'].astype(str).str.strip().str.upper()
+
+        df_pacientes = df_pacientes.drop_duplicates(subset=['Paciente'])
+        df_tipo = df_tipo.drop_duplicates(subset=['Equipamento'])
+
+        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento']], on='Paciente', how='left')
+        df_final = pd.merge(df_merge1, df_tipo[['Equipamento', 'Tipo']], on='Equipamento', how='left')
+
+        df_final['Operadora'] = df_final['Operadora'].fillna('NÃO LOCALIZADA')
+        df_final['Tipo de Atendimento'] = df_final['Tipo de Atendimento'].fillna('NÃO INFORMADO')
+        df_final['Tipo'] = df_final['Tipo'].fillna('NÃO CLASSIFICADO')
+        
+        return df_final
+    except Exception as e:
+        st.error(f"Erro ao conectar com o Google Sheets: {e}")
+        return pd.DataFrame()
+
+df_raw = carregar_dados_gsheets()
+
+# --- ABAIXO SEGUE A MESMA LÓGICA DE EXIBIÇÃO QUE JÁ FUNCIONAVA PERFEITAMENTE ---
+if not df_raw.empty:
+    # Filtros por Unidade
+    filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f)])
+    if 'filial_ativa' not in st.session_state: st.session_state.filial_ativa = "TODAS"
+    
+    cols_btn = st.columns(len(filiais))
+    for i, f in enumerate(filiais):
+        if cols_btn[i].button(f, use_container_width=True, type="primary" if st.session_state.filial_ativa == f else "secondary"):
+            st.session_state.filial_ativa = f
+            st.rerun()
+
+    df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
+
+    # Blocos de Resumo com Totais
+    st.markdown("### 📊 Resumo por Categoria")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    # Função para gerar tabela de resumo com linha de total
+    def gerar_resumo_com_total(df, grupo, col_nome):
+        res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
+        res = res.sort_values('Valor Total', ascending=False)
+        res.columns = [col_nome, 'Qtd Pacientes', 'Valor Total']
+        total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pacientes': res['Qtd Pacientes'].sum(), 'Valor Total': res['Valor Total'].sum()}])
+        res = pd.concat([res, total], ignore_index=True)
+        res['Valor Total'] = res['Valor Total'].apply(formatar_moeda)
+        return res
+
+    with c1:
+        st.write("**🏢 Operadoras**")
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Operadora', 'Operadora'), hide_index=True)
+    with c2:
+        st.write("**🚑 Atendimento**")
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Tipo de Atendimento'), hide_index=True)
+    with c3:
+        st.write("**🚚 Locadora**")
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), hide_index=True)
+    with c4:
+        st.write("**🔧 Tipo de Item**")
+        st.dataframe(gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), hide_index=True)
+
+    # Detalhamento por Paciente (Clique estendido)
+    st.divider()
+    h = st.columns([5, 1, 1.5])
+    h[0].markdown('<p class="header-style">Paciente</p>', unsafe_allow_html=True)
+    h[1].markdown('<p class="header-style" style="text-align: center;">Itens</p>', unsafe_allow_html=True)
+    h[2].markdown('<p class="header-style" style="text-align: right;">Total</p>', unsafe_allow_html=True)
+
+    df_lista = df_filt.groupby('Paciente').agg({'Equipamento': 'count', 'Valor Total': 'sum'}).reset_index().sort_values('Paciente')
+    if 'expander_states' not in st.session_state: st.session_state.expander_states = {}
+
+    for _, row in df_lista.iterrows():
+        nome_p, qtd_i, total_p = row['Paciente'], str(row['Equipamento']), formatar_moeda(row['Valor Total'])
+        if nome_p not in st.session_state.expander_states: st.session_state.expander_states[nome_p] = False
+        
+        c = st.columns([5, 1, 1.5])
+        if c[0].button(f"▼ {nome_p}", key=f"n_{nome_p}", use_container_width=True):
+            st.session_state.expander_states[nome_p] = not st.session_state.expander_states[nome_p]
+            st.rerun()
+        if c[1].button(qtd_i, key=f"q_{nome_p}", use_container_width=True):
+            st.session_state.expander_states[nome_p] = not st.session_state.expander_states[nome_p]
+            st.rerun()
+        if c[2].button(total_p, key=f"v_{nome_p}", use_container_width=True):
+            st.session_state.expander_states[nome_p] = not st.session_state.expander_states[nome_p]
+            st.rerun()
+
+        if st.session_state.expander_states[nome_p]:
+            df_det = df_filt[df_filt['Paciente'] == nome_p][['Equipamento', 'Tipo', 'Qtd', 'Valor Unitario', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']]
+            df_det['Valor Unitario'] = df_det['Valor Unitario'].apply(formatar_moeda)
+            df_det['Valor Total'] = df_det['Valor Total'].apply(formatar_moeda)
+            st.table(df_det)
