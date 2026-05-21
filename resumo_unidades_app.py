@@ -84,15 +84,15 @@ if not df_raw.empty:
 
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
- # --- BLOCOS DE RESUMO SUPERIORES (LAYOUT EM GRADE 2X2 - TUDO À VISTA) ---
+# --- BLOCOS DE RESUMO SUPERIORES (LARGURAS CONTROLADAS FILTRANTE) ---
     st.markdown("### 📊 Resumo por Categoria")
     
     # Função auxiliar para gerar os dados do resumo
     def gerar_resumo_com_total(df, grupo, col_nome):
         res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
-        res.columns = [col_nome, 'Qtd Pacientes', 'Valor Total']
-        total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pacientes': res['Qtd Pacientes'].sum(), 'Valor Total': res['Valor Total'].sum()}])
+        res.columns = [col_nome, 'Qtd Pac.', 'Valor Total']
+        total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pac.': res['Qtd Pac.'].sum(), 'Valor Total': res['Valor Total'].sum()}])
         res = pd.concat([res, total], ignore_index=True)
         res['Valor Total'] = res['Valor Total'].apply(formatar_moeda)
         return res
@@ -107,9 +107,9 @@ if not df_raw.empty:
             hide_index=True, 
             use_container_width=True,
             column_config={
-                "Operadora": st.column_config.TextColumn("Operadora", width="large"),
-                "Qtd Pacientes": st.column_config.NumberColumn("Qtd Pacientes", width="small"),
-                "Valor Total": st.column_config.TextColumn("Valor Total", width="medium")
+                "Operadora": st.column_config.TextColumn("Operadora", width=220), # Espaço controlado para o texto
+                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),   # Coluna de quantidade compacta
+                "Valor Total": st.column_config.TextColumn("Valor Total", width=140) # Espaço garantido para o dinheiro
             }
         )
         
@@ -120,14 +120,13 @@ if not df_raw.empty:
             hide_index=True, 
             use_container_width=True,
             column_config={
-                "Tipo de Atendimento": st.column_config.TextColumn("Tipo de Atendimento", width="large"),
-                "Qtd Pacientes": st.column_config.NumberColumn("Qtd Pacientes", width="small"),
-                "Valor Total": st.column_config.TextColumn("Valor Total", width="medium")
+                "Tipo de Atendimento": st.column_config.TextColumn("Tipo de Atendimento", width=220),
+                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),
+                "Valor Total": st.column_config.TextColumn("Valor Total", width=140)
             }
         )
 
-    # Espaçamento estético entre as linhas de tabelas
-    st.write("") 
+    st.write("") # Espaçamento estético
 
     # --- SEGUNDA LINHA: Locadora e Tipo de Item ---
     linha2_c1, linha2_c2 = st.columns(2)
@@ -139,9 +138,9 @@ if not df_raw.empty:
             hide_index=True, 
             use_container_width=True,
             column_config={
-                "Locadora": st.column_config.TextColumn("Locadora", width="large"),
-                "Qtd Pacientes": st.column_config.NumberColumn("Qtd Pacientes", width="small"),
-                "Valor Total": st.column_config.TextColumn("Valor Total", width="medium")
+                "Locadora": st.column_config.TextColumn("Locadora", width=220),
+                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),
+                "Valor Total": st.column_config.TextColumn("Valor Total", width=140)
             }
         )
         
@@ -152,12 +151,11 @@ if not df_raw.empty:
             hide_index=True, 
             use_container_width=True,
             column_config={
-                "Tipo de Item": st.column_config.TextColumn("Tipo de Item", width="large"),
-                "Qtd Pacientes": st.column_config.NumberColumn("Qtd Pacientes", width="small"),
-                "Valor Total": st.column_config.TextColumn("Valor Total", width="medium")
+                "Tipo de Item": st.column_config.TextColumn("Tipo de Item", width=220),
+                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),
+                "Valor Total": st.column_config.TextColumn("Valor Total", width=140)
             }
         )
-
     # --- DETALHAMENTO POR PACIENTE ---
     st.divider()
     st.markdown(f"### 👥 Detalhamento por Paciente - {st.session_state.filial_ativa}")
