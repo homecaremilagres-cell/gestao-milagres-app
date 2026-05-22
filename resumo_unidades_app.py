@@ -24,52 +24,60 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 3. CONEXÃO DIRETA VIA PANDAS (MÉTODO SEGURO)
-@st.cache_data(ttl=300)
+# 3. CONEXÃO DIRETA VIA PANDAS (LOGICA POR NÚMERO DE ATENDIMENTO)
+@st.cache_data(ttl=60)
 def carregar_dados_direto():
     try:
-        # ID único da sua planilha
         sheet_id = "1d_TbFNuJKBtBK-7rfMstsQcrtnCYQLw-47vZK92JWdY"
         
-        # Gerando URLs de exportação direta em CSV para cada aba
         url_detalhe = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=detalhamento"
         url_pacientes = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=pacientes"
         url_tipos = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=tipos"
         
-        # Lendo os dados
         df_equip = pd.read_csv(url_detalhe)
         df_pacientes = pd.read_csv(url_pacientes)
         df_tipo = pd.read_csv(url_tipos)
 
-        # Garantir que a coluna Filial exista na aba detalhamento (onde ela já é padrão)
-        if 'Filial' not in df_equip.columns:
-            # Caso esteja minúscula por acidente na planilha, corrige para o código
-            df_equip.columns = [c.strip().capitalize() if c.strip().lower() == 'filial' else c for c in df_equip.columns]
-
-        # Limpeza financeira básica
-        for col in ['Valor Total', 'Valor Unitario']:
-            if col in df_equip.columns:
-                df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
-                df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
-
-        # Tratamento de texto para o casamento perfeito dos dados
+        # Padronização da coluna de Atendimento (Tratando como texto para evitar problemas com zeros à esquerda)
+        # IMPORTANTE: Altere o 'Atendimento' abaixo se o nome da coluna na sua planilha for diferente
+        col_chave = 'Atendimento' 
+        
+        df_equip[col_chave] = df_equip[col_chave].astype(str).str.strip()
+        df_pacientes[col_chave] = df_pacientes[col_chave].astype(str).str.strip()
+        
+        # Mantendo também a padronização dos textos
         df_equip['Paciente'] = df_equip['Paciente'].astype(str).str.strip().str.upper()
         df_pacientes['Paciente'] = df_pacientes['Paciente'].astype(str).str.strip().str.upper()
         df_equip['Equipamento'] = df_equip['Equipamento'].astype(str).str.strip().str.upper()
         df_tipo['Equipamento'] = df_tipo['Equipamento'].astype(str).str.strip().str.upper()
 
-        # Remover duplicidades das abas de apoio para não duplicar valores no merge
-        df_pacientes = df_pacientes.drop_duplicates(subset=['Paciente'])
+        # Limpeza financeira de valores
+        for col in ['Valor Total', 'Valor Unitario']:
+            if col in df_equip.columns:
+                df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
+                df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
+
+        # Remove duplicados das abas de apoio usando o Atendimento como chave para a lista de pacientes ativos
+        df_pacientes = df_pacientes.drop_duplicates(subset=[col_chave])
         df_tipo = df_tipo.drop_duplicates(subset=['Equipamento'])
 
-        # --- REGRA DE ALTA (INNER JOIN): Só entram pacientes ativos que estão em AMBAS as abas ---
-        # Cruzamos trazendo Operadora e Atendimento da aba de pacientes
-        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento']], on='Paciente', how='inner')
+        # --- CRUZAMENTO PELA CHAVE DO ATENDIMENTO (RIGHT JOIN) ---
+        # Garante que filtramos as altas: se o número do atendimento sumiu da aba 'pacientes', ele sai do dashboard.
+        # Mas trazemos o nome correto ('Paciente') da aba pacientes para vincular o custo ao nome na tela.
+        df_merge1 = pd.merge(
+            df_equip.drop(columns=['Paciente'], errors='ignore'), # Remove o nome do detalhamento para usar o nome oficial da aba pacientes
+            df_pacientes[[col_chave, 'Paciente', 'Operadora', 'Tipo de Atendimento', 'Filial']], 
+            on=col_chave, 
+            how='right'
+        )
         
         # Cruzamento com os tipos de equipamentos
         df_final = pd.merge(df_merge1, df_tipo[['Equipamento', 'Tipo']], on='Equipamento', how='left')
 
-        # Tratamentos preventivos para campos nulos
+        # Tratamentos preventivos
+        df_final['Valor Total'] = df_final['Valor Total'].fillna(0)
+        df_final['Equipamento'] = df_final['Equipamento'].fillna('SEM ITEM CADASTRADO')
+        df_final['Locadora'] = df_final['Locadora'].fillna('NÃO INFORMADA')
         df_final['Operadora'] = df_final['Operadora'].fillna('NÃO LOCALIZADA')
         df_final['Tipo de Atendimento'] = df_final['Tipo de Atendimento'].fillna('NÃO INFORMADO')
         df_final['Tipo'] = df_final['Tipo'].fillna('NÃO CLASSIFICADO')
@@ -77,7 +85,7 @@ def carregar_dados_direto():
         
         return df_final
     except Exception as e:
-        st.error(f"Erro ao ler dados da planilha pública: {e}")
+        st.error(f"Erro ao processar dados por número de atendimento: {e}")
         return pd.DataFrame()
 
 df_raw = carregar_dados_direto()
@@ -86,8 +94,7 @@ if not df_raw.empty:
     # --- FILTROS POR UNIDADE ---
     st.markdown("### 📍 Selecionar Unidade")
     
-    # Coleta de filiais de forma 100% segura baseada na aba de detalhamento consolidada
-    filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f) and str(f).strip() != ""])
+    filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f) and str(f).strip() != "" and str(f) != "NÃO INFORMADA"])
     if 'filial_ativa' not in st.session_state: st.session_state.filial_ativa = "TODAS"
     
     cols_btn = st.columns(len(filiais))
@@ -99,11 +106,12 @@ if not df_raw.empty:
     # Aplicação do filtro de Filial global
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-    # --- BLOCOS DE RESUMO SUPERIORES (LAYOUT EM GRADE 2X2) ---
+    # --- BLOCOS DE RESUMO SUPERIORES (CONTAGEM POR ATENDIMENTOS ÚNICOS) ---
     st.markdown("### 📊 Resumo por Categoria")
     
     def gerar_resumo_com_total(df, grupo, col_nome):
-        res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
+        # A contagem de pac. agora é feita contando Atendimentos únicos ('Atendimento'), mas agrupados pela categoria
+        res = df.groupby(grupo).agg({'Atendimento': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
         res.columns = [col_nome, 'Qtd Pac.', 'Valor Total']
         total = pd.DataFrame([{col_nome: 'TOTAL', 'Qtd Pac.': res['Qtd Pac.'].sum(), 'Valor Total': res['Valor Total'].sum()}])
@@ -147,8 +155,9 @@ if not df_raw.empty:
     
     with linha2_c1:
         st.write("**🚚 Locadora**")
+        df_loc = df_filt[df_filt['Equipamento'] != 'SEM ITEM CADASTRADO']
         st.dataframe(
-            gerar_resumo_com_total(df_filt, 'Locadora', 'Locadora'), 
+            gerar_resumo_com_total(df_loc if not df_loc.empty else df_filt, 'Locadora', 'Locadora'), 
             hide_index=True, 
             use_container_width=True,
             column_config={
@@ -160,8 +169,9 @@ if not df_raw.empty:
         
     with linha2_c2:
         st.write("**🔧 Tipo de Item**")
+        df_tipo_item = df_filt[df_filt['Equipamento'] != 'SEM ITEM CADASTRADO']
         st.dataframe(
-            gerar_resumo_com_total(df_filt, 'Tipo', 'Tipo de Item'), 
+            gerar_resumo_com_total(df_tipo_item if not df_tipo_item.empty else df_filt, 'Tipo', 'Tipo de Item'), 
             hide_index=True, 
             use_container_width=True,
             column_config={
@@ -180,11 +190,15 @@ if not df_raw.empty:
     h[1].markdown('<p class="header-style" style="text-align: center;">Itens</p>', unsafe_allow_html=True)
     h[2].markdown('<p class="header-style" style="text-align: right;">Total</p>', unsafe_allow_html=True)
 
-    df_lista = df_filt.groupby('Paciente').agg({'Equipamento': 'count', 'Valor Total': 'sum'}).reset_index().sort_values('Paciente')
+    # Agrupamos por Paciente na tela, mas calculamos baseados nos Atendimentos únicos associados a ele
+    df_lista = df_filt.copy()
+    df_lista['Contagem_Item'] = df_lista['Equipamento'].apply(lambda x: 0 if x == 'SEM ITEM CADASTRADO' else 1)
+    
+    df_lista_agrupada = df_lista.groupby('Paciente').agg({'Contagem_Item': 'sum', 'Valor Total': 'sum'}).reset_index().sort_values('Paciente')
     if 'expander_states' not in st.session_state: st.session_state.expander_states = {}
 
-    for _, row in df_lista.iterrows():
-        nome_p, qtd_i, total_p = row['Paciente'], str(row['Equipamento']), formatar_moeda(row['Valor Total'])
+    for _, row in df_lista_agrupada.iterrows():
+        nome_p, qtd_i, total_p = row['Paciente'], str(row['Contagem_Item']), formatar_moeda(row['Valor Total'])
         if nome_p not in st.session_state.expander_states: st.session_state.expander_states[nome_p] = False
         
         c = st.columns([5, 1, 1.5])
@@ -200,9 +214,13 @@ if not df_raw.empty:
 
         if st.session_state.expander_states[nome_p]:
             df_det = df_filt[df_filt['Paciente'] == nome_p][['Equipamento', 'Tipo', 'Qtd', 'Valor Unitario', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']].copy()
-            df_det['Valor Unitario'] = df_det['Valor Unitario'].apply(formatar_moeda)
-            df_det['Valor Total'] = df_det['Valor Total'].apply(formatar_moeda)
-            df_det.columns = ['Equipamento', 'Tipo de Item', 'Qtd', 'Valor Unitário', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']
-            st.table(df_det)
+            
+            if len(df_det) == 1 and df_det['Equipamento'].values[0] == 'SEM ITEM CADASTRADO':
+                st.info("Paciente ativo com este atendimento cadastrado, mas sem nenhum equipamento lançado no detalhamento.")
+            else:
+                df_det['Valor Unitario'] = df_det['Valor Unitario'].apply(formatar_moeda)
+                df_det['Valor Total'] = df_det['Valor Total'].apply(formatar_moeda)
+                df_det.columns = ['Equipamento', 'Tipo de Item', 'Qtd', 'Valor Unitário', 'Valor Total', 'Locadora', 'Operadora', 'Tipo de Atendimento']
+                st.table(df_det)
 else:
     st.warning("Aguardando carregamento inicial da planilha na nuvem...")
