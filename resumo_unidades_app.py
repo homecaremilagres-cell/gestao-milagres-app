@@ -24,7 +24,7 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 3. CONEXÃO DIRETA VIA PANDAS (À PROVA DE ERRO 400)
+# 3. CONEXÃO DIRETA VIA PANDAS (MÉTODO OTIMIZADO)
 @st.cache_data(ttl=300)
 def carregar_dados_direto():
     try:
@@ -36,7 +36,7 @@ def carregar_dados_direto():
         url_pacientes = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=pacientes"
         url_tipos = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=tipos"
         
-        # Lendo os dados ignorando erros de parser do Streamlit
+        # Lendo os dados
         df_equip = pd.read_csv(url_detalhe)
         df_pacientes = pd.read_csv(url_pacientes)
         df_tipo = pd.read_csv(url_tipos)
@@ -47,18 +47,24 @@ def carregar_dados_direto():
                 df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                 df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
 
-        # Tratamento de texto para o casamento (Merge)
+        # Tratamento de texto para o casamento perfeito dos dados
         df_equip['Paciente'] = df_equip['Paciente'].astype(str).str.strip().str.upper()
         df_pacientes['Paciente'] = df_pacientes['Paciente'].astype(str).str.strip().str.upper()
         df_equip['Equipamento'] = df_equip['Equipamento'].astype(str).str.strip().str.upper()
         df_tipo['Equipamento'] = df_tipo['Equipamento'].astype(str).str.strip().str.upper()
 
+        # Remover duplicidades das abas de apoio para não duplicar valores no merge
         df_pacientes = df_pacientes.drop_duplicates(subset=['Paciente'])
         df_tipo = df_tipo.drop_duplicates(subset=['Equipamento'])
 
-        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento']], on='Paciente', how='left')
+        # --- REGRA DE ALTA (INNER JOIN): Paciente precisa existir na aba detalhamento E na aba pacientes ---
+        # Se o paciente tiver recebido alta (removido da aba pacientes), ele sumirá automaticamente do dashboard aqui
+        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento', 'Filial']], on='Paciente', how='inner')
+        
+        # Cruzamento com os tipos de equipamentos
         df_final = pd.merge(df_merge1, df_tipo[['Equipamento', 'Tipo']], on='Equipamento', how='left')
 
+        # Tratamento para campos vazios preventivos
         df_final['Operadora'] = df_final['Operadora'].fillna('NÃO LOCALIZADA')
         df_final['Tipo de Atendimento'] = df_final['Tipo de Atendimento'].fillna('NÃO INFORMADO')
         df_final['Tipo'] = df_final['Tipo'].fillna('NÃO CLASSIFICADO')
@@ -73,7 +79,9 @@ df_raw = carregar_dados_direto()
 if not df_raw.empty:
     # --- FILTROS POR UNIDADE ---
     st.markdown("### 📍 Selecionar Unidade")
-    filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f)])
+    
+    # Agora a Filial é extraída com total segurança da estrutura consolidada
+    filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f) and str(f).strip() != ""])
     if 'filial_ativa' not in st.session_state: st.session_state.filial_ativa = "TODAS"
     
     cols_btn = st.columns(len(filiais))
@@ -82,12 +90,12 @@ if not df_raw.empty:
             st.session_state.filial_ativa = f
             st.rerun()
 
+    # Aplicação do filtro de Filial global
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-# --- BLOCOS DE RESUMO SUPERIORES (LARGURAS CONTROLADAS FILTRANTE) ---
+    # --- BLOCOS DE RESUMO SUPERIORES (LARGURAS CONTROLADAS E FILTRADOS CORRETAMENTE) ---
     st.markdown("### 📊 Resumo por Categoria")
     
-    # Função auxiliar para gerar os dados do resumo
     def gerar_resumo_com_total(df, grupo, col_nome):
         res = df.groupby(grupo).agg({'Paciente': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
@@ -107,9 +115,9 @@ if not df_raw.empty:
             hide_index=True, 
             use_container_width=True,
             column_config={
-                "Operadora": st.column_config.TextColumn("Operadora", width=220), # Espaço controlado para o texto
-                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),   # Coluna de quantidade compacta
-                "Valor Total": st.column_config.TextColumn("Valor Total", width=140) # Espaço garantido para o dinheiro
+                "Operadora": st.column_config.TextColumn("Operadora", width=220),
+                "Qtd Pac.": st.column_config.NumberColumn("Qtd Pac.", width=80),
+                "Valor Total": st.column_config.TextColumn("Valor Total", width=140)
             }
         )
         
@@ -126,7 +134,7 @@ if not df_raw.empty:
             }
         )
 
-    st.write("") # Espaçamento estético
+    st.write("") 
 
     # --- SEGUNDA LINHA: Locadora e Tipo de Item ---
     linha2_c1, linha2_c2 = st.columns(2)
@@ -156,6 +164,7 @@ if not df_raw.empty:
                 "Valor Total": st.column_config.TextColumn("Valor Total", width=140)
             }
         )
+
     # --- DETALHAMENTO POR PACIENTE ---
     st.divider()
     st.markdown(f"### 👥 Detalhamento por Paciente - {st.session_state.filial_ativa}")
