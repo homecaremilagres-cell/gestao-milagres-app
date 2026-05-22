@@ -24,7 +24,7 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 3. CONEXÃO DIRETA VIA PANDAS (MÉTODO OTIMIZADO)
+# 3. CONEXÃO DIRETA VIA PANDAS (MÉTODO SEGURO)
 @st.cache_data(ttl=300)
 def carregar_dados_direto():
     try:
@@ -40,6 +40,11 @@ def carregar_dados_direto():
         df_equip = pd.read_csv(url_detalhe)
         df_pacientes = pd.read_csv(url_pacientes)
         df_tipo = pd.read_csv(url_tipos)
+
+        # Garantir que a coluna Filial exista na aba detalhamento (onde ela já é padrão)
+        if 'Filial' not in df_equip.columns:
+            # Caso esteja minúscula por acidente na planilha, corrige para o código
+            df_equip.columns = [c.strip().capitalize() if c.strip().lower() == 'filial' else c for c in df_equip.columns]
 
         # Limpeza financeira básica
         for col in ['Valor Total', 'Valor Unitario']:
@@ -57,17 +62,18 @@ def carregar_dados_direto():
         df_pacientes = df_pacientes.drop_duplicates(subset=['Paciente'])
         df_tipo = df_tipo.drop_duplicates(subset=['Equipamento'])
 
-        # --- REGRA DE ALTA (INNER JOIN): Paciente precisa existir na aba detalhamento E na aba pacientes ---
-        # Se o paciente tiver recebido alta (removido da aba pacientes), ele sumirá automaticamente do dashboard aqui
-        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento', 'Filial']], on='Paciente', how='inner')
+        # --- REGRA DE ALTA (INNER JOIN): Só entram pacientes ativos que estão em AMBAS as abas ---
+        # Cruzamos trazendo Operadora e Atendimento da aba de pacientes
+        df_merge1 = pd.merge(df_equip, df_pacientes[['Paciente', 'Operadora', 'Tipo de Atendimento']], on='Paciente', how='inner')
         
         # Cruzamento com os tipos de equipamentos
         df_final = pd.merge(df_merge1, df_tipo[['Equipamento', 'Tipo']], on='Equipamento', how='left')
 
-        # Tratamento para campos vazios preventivos
+        # Tratamentos preventivos para campos nulos
         df_final['Operadora'] = df_final['Operadora'].fillna('NÃO LOCALIZADA')
         df_final['Tipo de Atendimento'] = df_final['Tipo de Atendimento'].fillna('NÃO INFORMADO')
         df_final['Tipo'] = df_final['Tipo'].fillna('NÃO CLASSIFICADO')
+        df_final['Filial'] = df_final['Filial'].fillna('NÃO INFORMADA').astype(str).str.strip().str.upper()
         
         return df_final
     except Exception as e:
@@ -80,7 +86,7 @@ if not df_raw.empty:
     # --- FILTROS POR UNIDADE ---
     st.markdown("### 📍 Selecionar Unidade")
     
-    # Agora a Filial é extraída com total segurança da estrutura consolidada
+    # Coleta de filiais de forma 100% segura baseada na aba de detalhamento consolidada
     filiais = ["TODAS"] + sorted([str(f) for f in df_raw['Filial'].unique() if pd.notna(f) and str(f).strip() != ""])
     if 'filial_ativa' not in st.session_state: st.session_state.filial_ativa = "TODAS"
     
@@ -93,7 +99,7 @@ if not df_raw.empty:
     # Aplicação do filtro de Filial global
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-    # --- BLOCOS DE RESUMO SUPERIORES (LARGURAS CONTROLADAS E FILTRADOS CORRETAMENTE) ---
+    # --- BLOCOS DE RESUMO SUPERIORES (LAYOUT EM GRADE 2X2) ---
     st.markdown("### 📊 Resumo por Categoria")
     
     def gerar_resumo_com_total(df, grupo, col_nome):
