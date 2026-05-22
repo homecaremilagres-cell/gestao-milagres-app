@@ -38,14 +38,19 @@ def carregar_dados_direto():
         df_pacientes = pd.read_csv(url_pacientes)
         df_tipo = pd.read_csv(url_tipos)
 
-        # Padronização da coluna de Atendimento (Tratando como texto para evitar problemas com zeros à esquerda)
-        # IMPORTANTE: Altere o 'Atendimento' abaixo se o nome da coluna na sua planilha for diferente
+        # Chave por Atendimento conforme alinhado
         col_chave = 'Atendimento' 
         
+        # Limpeza agressiva de nomes de colunas para evitar incompatibilidade por espaços ocultos
+        df_equip.columns = df_equip.columns.str.strip()
+        df_pacientes.columns = df_pacientes.columns.str.strip()
+        df_tipo.columns = df_tipo.columns.str.strip()
+        
+        # Força conversão da chave para texto limpo
         df_equip[col_chave] = df_equip[col_chave].astype(str).str.strip()
         df_pacientes[col_chave] = df_pacientes[col_chave].astype(str).str.strip()
         
-        # Mantendo também a padronização dos textos
+        # Padronização textual de segurança
         df_equip['Paciente'] = df_equip['Paciente'].astype(str).str.strip().str.upper()
         df_pacientes['Paciente'] = df_pacientes['Paciente'].astype(str).str.strip().str.upper()
         df_equip['Equipamento'] = df_equip['Equipamento'].astype(str).str.strip().str.upper()
@@ -57,24 +62,25 @@ def carregar_dados_direto():
                 df_equip[col] = df_equip[col].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False).str.strip()
                 df_equip[col] = pd.to_numeric(df_equip[col], errors='coerce').fillna(0)
 
-        # Remove duplicados das abas de apoio usando o Atendimento como chave para a lista de pacientes ativos
+        # Remove duplicados das abas de apoio para não inflar contagens
         df_pacientes = df_pacientes.drop_duplicates(subset=[col_chave])
         df_tipo = df_tipo.drop_duplicates(subset=['Equipamento'])
 
-        # --- CRUZAMENTO PELA CHAVE DO ATENDIMENTO (RIGHT JOIN) ---
-        # Garante que filtramos as altas: se o número do atendimento sumiu da aba 'pacientes', ele sai do dashboard.
-        # Mas trazemos o nome correto ('Paciente') da aba pacientes para vincular o custo ao nome na tela.
+        # --- CORREÇÃO DO MERGE (PREVENÇÃO DE DUPLICIDADE DE FILIAL) ---
+        # Removemos 'Paciente' e 'Filial' da tabela de equipamentos para usar exclusivamente os dados oficiais da aba 'pacientes'
+        df_equip_limpo = df_equip.drop(columns=['Paciente', 'Filial'], errors='ignore')
+        
         df_merge1 = pd.merge(
-            df_equip.drop(columns=['Paciente'], errors='ignore'), # Remove o nome do detalhamento para usar o nome oficial da aba pacientes
+            df_equip_limpo, 
             df_pacientes[[col_chave, 'Paciente', 'Operadora', 'Tipo de Atendimento', 'Filial']], 
             on=col_chave, 
             how='right'
         )
         
-        # Cruzamento com os tipos de equipamentos
+        # Cruzamento final com tipos de itens
         df_final = pd.merge(df_merge1, df_tipo[['Equipamento', 'Tipo']], on='Equipamento', how='left')
 
-        # Tratamentos preventivos
+        # Tratamentos para campos nulos (pacientes sem nenhum custo lançado)
         df_final['Valor Total'] = df_final['Valor Total'].fillna(0)
         df_final['Equipamento'] = df_final['Equipamento'].fillna('SEM ITEM CADASTRADO')
         df_final['Locadora'] = df_final['Locadora'].fillna('NÃO INFORMADA')
@@ -106,11 +112,10 @@ if not df_raw.empty:
     # Aplicação do filtro de Filial global
     df_filt = df_raw if st.session_state.filial_ativa == "TODAS" else df_raw[df_raw['Filial'] == st.session_state.filial_ativa]
 
-    # --- BLOCOS DE RESUMO SUPERIORES (CONTAGEM POR ATENDIMENTOS ÚNICOS) ---
+    # --- BLOCOS DE RESUMO SUPERIORES ---
     st.markdown("### 📊 Resumo por Categoria")
     
     def gerar_resumo_com_total(df, grupo, col_nome):
-        # A contagem de pac. agora é feita contando Atendimentos únicos ('Atendimento'), mas agrupados pela categoria
         res = df.groupby(grupo).agg({'Atendimento': 'nunique', 'Valor Total': 'sum'}).reset_index()
         res = res.sort_values('Valor Total', ascending=False)
         res.columns = [col_nome, 'Qtd Pac.', 'Valor Total']
@@ -120,7 +125,7 @@ if not df_raw.empty:
         return res
 
     # --- PRIMEIRA LINHA: Operadoras e Atendimento ---
-    linha1_c1, linha1_c2 = st.columns(2)
+    linha1_c1, Self = st.columns(2)
     
     with linha1_c1:
         st.write("**🏢 Operadoras**")
@@ -135,7 +140,7 @@ if not df_raw.empty:
             }
         )
         
-    with linha1_c2:
+    with Self:
         st.write("**🚑 Atendimento**")
         st.dataframe(
             gerar_resumo_com_total(df_filt, 'Tipo de Atendimento', 'Tipo de Atendimento'), 
@@ -190,7 +195,6 @@ if not df_raw.empty:
     h[1].markdown('<p class="header-style" style="text-align: center;">Itens</p>', unsafe_allow_html=True)
     h[2].markdown('<p class="header-style" style="text-align: right;">Total</p>', unsafe_allow_html=True)
 
-    # Agrupamos por Paciente na tela, mas calculamos baseados nos Atendimentos únicos associados a ele
     df_lista = df_filt.copy()
     df_lista['Contagem_Item'] = df_lista['Equipamento'].apply(lambda x: 0 if x == 'SEM ITEM CADASTRADO' else 1)
     
